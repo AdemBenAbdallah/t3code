@@ -634,9 +634,19 @@ export const Zed: Icon = (props) => {
   );
 };
 
-export const Neovim: Icon = (props) => (
-  <svg {...props} viewBox="0 0 24 24" fill="currentColor">
-    <path d="M2.214 4.954v13.615L7.655 24V10.314L3.312 3.845 2.214 4.954zm4.999 17.98l-4.557-4.548V5.136l.59-.596 3.967 5.908v12.485zm14.573-4.457l-.862.937-4.24-6.376V0l5.068 5.092.034 13.385zM7.431.001l12.998 19.835-3.637 3.637L3.787 3.683 7.43 0z" />
+export const TerminalEditorIcon: Icon = (props) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    <rect width="18" height="18" x="3" y="3" rx="2" />
+    <path d="m7 11 2-2-2-2" />
+    <path d="M11 13h4" />
   </svg>
 );
 

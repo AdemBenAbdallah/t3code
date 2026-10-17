@@ -17,7 +17,10 @@ type EditorDefinition = {
   readonly launchStyle: EditorLaunchStyle;
   readonly remoteScheme?: string;
   readonly jetbrainsProductCode?: string;
-  /** A terminal app (e.g. Neovim) that only runs inside a terminal emulator. */
+  /**
+   * Runs `$VISUAL` or `$EDITOR` inside a terminal emulator; `commands` is the
+   * fallback when neither is set.
+   */
   readonly terminal?: true;
 };
 
@@ -62,8 +65,8 @@ export const EDITORS = [
     remoteScheme: "zed",
   },
   {
-    id: "neovim",
-    label: "Neovim",
+    id: "terminal-editor",
+    label: "Terminal Editor",
     commands: ["nvim"],
     launchStyle: "plus-line",
     terminal: true,

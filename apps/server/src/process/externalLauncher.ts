@@ -170,22 +170,77 @@ function resolveCommandEditorArgs(
         ],
       });
     case "plus-line":
-      // Neovim parses `file:3` as a filename, so the position travels as a
-      // `+` command ahead of the path: `+3` or `+call cursor(3,1)`. `--` ends
-      // option parsing so a target that starts with `+` or `-` stays a path.
-      return Option.match(parsedTarget, {
-        onNone: () => ["--", target],
-        onSome: ({ path, line, column }) => [
-          Option.match(column, {
-            onNone: () => `+${line}`,
-            onSome: (value) => `+call cursor(${line},${value})`,
-          }),
-          "--",
-          path,
-        ],
-      });
+      return terminalEditorArgs("nvim", target);
   }
 }
+
+const TerminalEditorEnvConfig = Config.all({
+  VISUAL: Config.String("VISUAL").pipe(Config.option),
+  EDITOR: Config.String("EDITOR").pipe(Config.option),
+}).pipe(Config.map(compactEnv));
+
+const readTerminalEditorEnv = TerminalEditorEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
+
+// `$VISUAL` and `$EDITOR` may carry flags (`emacs -nw`). They are split on
+// whitespace and spawned without a shell, so quoting inside them is not
+// interpreted.
+function configuredTerminalEditor(env: NodeJS.ProcessEnv): ReadonlyArray<string> | undefined {
+  for (const value of [env.VISUAL, env.EDITOR]) {
+    const words = value?.trim().split(/\s+/).filter(Boolean) ?? [];
+    if (words.length > 0) return words;
+  }
+  return undefined;
+}
+
+const VIM_FAMILY = new Set(["vi", "vim", "nvim"]);
+// Editors that read a `+N` argument as "start at line N".
+const PLUS_LINE_EDITORS = new Set(["nano", "emacs", "micro", "kak"]);
+
+function terminalEditorArgs(command: string, target: string): ReadonlyArray<string> {
+  const name = command
+    .split(/[\\/]/)
+    .at(-1)!
+    .replace(/\.exe$/i, "");
+  const parsedTarget = parseTargetPathAndPosition(target);
+
+  if (VIM_FAMILY.has(name)) {
+    // Vim parses `file:3` as a filename, so the position travels as a `+`
+    // command ahead of the path. `--` ends option parsing so a target that
+    // starts with `+` or `-` stays a path.
+    return Option.match(parsedTarget, {
+      onNone: () => ["--", target],
+      onSome: ({ path, line, column }) => [
+        Option.match(column, {
+          onNone: () => `+${line}`,
+          onSome: (value) => `+call cursor(${line},${value})`,
+        }),
+        "--",
+        path,
+      ],
+    });
+  }
+
+  // Other editors disagree on how to take a position, so unknown ones get the
+  // bare path rather than an argument they might misread.
+  return Option.match(parsedTarget, {
+    onNone: () => [target],
+    onSome: ({ path, line }) => (PLUS_LINE_EDITORS.has(name) ? [`+${line}`, path] : [path]),
+  });
+}
+
+const resolveTerminalEditorCommand = Effect.fn("externalLauncher.resolveTerminalEditorCommand")(
+  function* (
+    editor: (typeof EDITORS)[number],
+    env: NodeJS.ProcessEnv,
+  ): Effect.fn.Return<ReadonlyArray<string> | undefined, never, FileSystem.FileSystem | Path.Path> {
+    const configured = configuredTerminalEditor(env);
+    if (configured !== undefined) {
+      return (yield* isCommandAvailable(configured[0]!, { env })) ? configured : undefined;
+    }
+    const fallback = yield* resolveEditorCommand(editor, env);
+    return Option.isSome(fallback) ? [fallback.value.command] : undefined;
+  },
+);
 
 /**
  * Terminal emulators that can host a terminal editor, probed in order; the
@@ -574,13 +629,15 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
       continue;
     }
 
-    const command = yield* resolveEditorCommand(editor, env);
-    if (Option.isNone(command)) {
-      continue;
-    }
-
-    // A terminal editor without a terminal host would be a dead end.
-    if ("terminal" in editor && !(yield* hasTerminalHost(platform, env))) {
+    if ("terminal" in editor) {
+      // A terminal editor without a terminal host would be a dead end.
+      if (
+        (yield* resolveTerminalEditorCommand(editor, env)) === undefined ||
+        !(yield* hasTerminalHost(platform, env))
+      ) {
+        continue;
+      }
+    } else if (Option.isNone(yield* resolveEditorCommand(editor, env))) {
       continue;
     }
 
@@ -600,7 +657,11 @@ const resolveBrowserLaunch = Effect.fn("externalLauncher.resolveBrowserLaunch")(
 
 const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEditors")(function* () {
   const platform = yield* HostProcess.Platform;
-  const env = { ...(yield* readBrowserLaunchEnv), ...(yield* readCommandLookupEnv) };
+  const env = {
+    ...(yield* readBrowserLaunchEnv),
+    ...(yield* readCommandLookupEnv),
+    ...(yield* readTerminalEditorEnv),
+  };
   return yield* buildAvailableEditors(platform, env).pipe(withPathDirectoryListings);
 });
 
@@ -649,7 +710,11 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
 > {
   const platform = yield* HostProcess.Platform;
-  const env = { ...(yield* readBrowserLaunchEnv), ...(yield* readCommandLookupEnv) };
+  const env = {
+    ...(yield* readBrowserLaunchEnv),
+    ...(yield* readCommandLookupEnv),
+    ...(yield* readTerminalEditorEnv),
+  };
   yield* Effect.annotateCurrentSpan({
     "externalLauncher.editor": input.editor,
     "externalLauncher.cwd": input.cwd,
@@ -658,6 +723,27 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   const editorDef = EDITORS.find((editor) => editor.id === input.editor);
   if (!editorDef) {
     return yield* new ExternalLauncherUnknownEditorError({ editor: input.editor });
+  }
+
+  if ("terminal" in editorDef) {
+    const editorCommand = yield* resolveTerminalEditorCommand(editorDef, env);
+    const terminalLaunch =
+      editorCommand === undefined
+        ? undefined
+        : yield* resolveTerminalLaunch(
+            [...editorCommand, ...terminalEditorArgs(editorCommand[0]!, input.cwd)],
+            platform,
+            env,
+          );
+    if (terminalLaunch === undefined) {
+      return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
+    }
+    return {
+      editor: editorDef.id,
+      target: input.cwd,
+      command: terminalLaunch.command,
+      args: terminalLaunch.args,
+    };
   }
 
   if (editorDef.commands) {
@@ -669,24 +755,6 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
       }),
     );
     const editorCommand = [...baseArgs, ...resolveCommandEditorArgs(editorDef, input.cwd)];
-
-    if ("terminal" in editorDef) {
-      const terminalLaunch = yield* resolveTerminalLaunch(
-        [command, ...editorCommand],
-        platform,
-        env,
-      );
-      if (terminalLaunch === undefined) {
-        return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
-      }
-      return {
-        editor: editorDef.id,
-        target: input.cwd,
-        command: terminalLaunch.command,
-        args: terminalLaunch.args,
-      };
-    }
-
     return {
       editor: editorDef.id,
       target: input.cwd,

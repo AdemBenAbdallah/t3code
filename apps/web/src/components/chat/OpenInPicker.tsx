@@ -38,7 +38,7 @@ import {
   FinderIcon,
   Icon,
   KiroIcon,
-  Neovim,
+  TerminalEditorIcon,
   TraeIcon,
   VisualStudioCode,
   VisualStudioCodeInsiders,
@@ -120,9 +120,9 @@ export const resolveOpenInOptions = (
       kind: "brand",
     },
     {
-      Icon: Neovim,
-      value: "neovim",
-      kind: "brand",
+      Icon: TerminalEditorIcon,
+      value: "terminal-editor",
+      kind: "generic",
     },
     {
       Icon: AntigravityIcon,
