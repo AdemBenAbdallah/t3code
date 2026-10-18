@@ -183,32 +183,61 @@ const readTerminalEditorEnv = TerminalEditorEnvConfig.pipe(Effect.orElseSucceed(
 
 // `$VISUAL` and `$EDITOR` may carry flags (`emacs -nw`) and quoted paths
 // (`"/opt/My Editor/ed"`). Quotes group and join adjacent text like a shell
-// word (`--cmd="set number"` is one argument), but the result is spawned
-// without a shell, so nothing else is expanded.
+// word (`--cmd="set number"` is one argument), and a backslash can escape a
+// quote so a value can contain one (`--cmd="let g:x=\"a b\""`). The result is
+// spawned without a shell, so nothing else is expanded.
 function splitCommandWords(value: string): ReadonlyArray<string> {
   const words: string[] = [];
   let word = "";
   let quote: '"' | "'" | undefined;
   let hasWord = false;
-  for (const character of value) {
-    if (quote !== undefined) {
-      if (character === quote) quote = undefined;
-      else word += character;
+  const append = (text: string) => {
+    word += text;
+    hasWord = true;
+  };
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]!;
+    if (quote === "'") {
+      if (character === "'") quote = undefined;
+      else append(character);
       continue;
     }
-    if (character === '"' || character === "'") {
-      quote = character;
-      hasWord = true;
+    if (character === "\\") {
+      // A backslash only escapes a double quote; inside double quotes it also
+      // escapes itself. Any other backslash stays literal so unquoted Windows
+      // paths pass through unchanged.
+      const next = value[index + 1];
+      if (next === '"' || (quote === '"' && next === "\\")) {
+        append(next);
+        index += 1;
+      } else {
+        append("\\");
+      }
       continue;
     }
-    if (/\s/.test(character)) {
+    if (character === '"') {
+      if (quote === '"') quote = undefined;
+      else {
+        quote = '"';
+        hasWord = true;
+      }
+      continue;
+    }
+    if (character === "'") {
+      if (quote === '"') append(character);
+      else {
+        quote = "'";
+        hasWord = true;
+      }
+      continue;
+    }
+    if (quote === undefined && /\s/.test(character)) {
       if (hasWord) words.push(word);
       word = "";
       hasWord = false;
       continue;
     }
-    word += character;
-    hasWord = true;
+    append(character);
   }
   if (hasWord) words.push(word);
   return words;

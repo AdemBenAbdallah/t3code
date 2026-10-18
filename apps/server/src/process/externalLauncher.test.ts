@@ -1836,6 +1836,18 @@ for (const { env, stubs, args } of [
     stubs: ["nvim"],
     args: ["nvim", "--cmd=set number", "+call cursor(48,5)", "--", "/workspace/file.ts"],
   },
+  // An escaped quote stays inside its quoted flag value.
+  {
+    env: { EDITOR: 'nvim --cmd="let g:label=\\"two words\\""' },
+    stubs: ["nvim"],
+    args: [
+      "nvim",
+      '--cmd=let g:label="two words"',
+      "+call cursor(48,5)",
+      "--",
+      "/workspace/file.ts",
+    ],
+  },
 ] as const) {
   it.effect.skipIf(windowsHost)(`runs the terminal editor from ${JSON.stringify(env)}`, () =>
     Effect.gen(function* () {
