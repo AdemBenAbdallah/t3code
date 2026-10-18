@@ -181,16 +181,29 @@ const TerminalEditorEnvConfig = Config.all({
 
 const readTerminalEditorEnv = TerminalEditorEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
 
-// `$VISUAL` and `$EDITOR` may carry flags (`emacs -nw`). They are split on
-// whitespace and spawned without a shell, so quoting inside them is not
-// interpreted.
+// `$VISUAL` and `$EDITOR` may carry flags (`emacs -nw`) and quoted paths
+// (`"/opt/My Editor/ed"`). Words split like a shell would split them, but the
+// result is spawned without one, so nothing else is expanded.
+function splitCommandWords(value: string): ReadonlyArray<string> {
+  const words: string[] = [];
+  for (const match of value.matchAll(/(?:"([^"]*)"|'([^']*)'|(\S+?))(?=\s|$|["'])|\s+/g)) {
+    if (match[0].trim() === "") continue;
+    words.push(match[1] ?? match[2] ?? match[3] ?? "");
+  }
+  return words;
+}
+
 function configuredTerminalEditor(env: NodeJS.ProcessEnv): ReadonlyArray<string> | undefined {
   for (const value of [env.VISUAL, env.EDITOR]) {
-    const words = value?.trim().split(/\s+/).filter(Boolean) ?? [];
+    const words = value === undefined ? [] : splitCommandWords(value);
     if (words.length > 0) return words;
   }
   return undefined;
 }
+
+// Without a known `--`, a relative path is anchored so a leading `+` or `-`
+// cannot read as an option.
+const asPathArgument = (path: string) => (/^[+-]/.test(path) ? `./${path}` : path);
 
 const VIM_FAMILY = new Set(["vi", "vim", "nvim"]);
 // Editors that read a `+N` argument as "start at line N".
@@ -223,8 +236,9 @@ function terminalEditorArgs(command: string, target: string): ReadonlyArray<stri
   // Other editors disagree on how to take a position, so unknown ones get the
   // bare path rather than an argument they might misread.
   return Option.match(parsedTarget, {
-    onNone: () => [target],
-    onSome: ({ path, line }) => (PLUS_LINE_EDITORS.has(name) ? [`+${line}`, path] : [path]),
+    onNone: () => [asPathArgument(target)],
+    onSome: ({ path, line }) =>
+      PLUS_LINE_EDITORS.has(name) ? [`+${line}`, asPathArgument(path)] : [asPathArgument(path)],
   });
 }
 

@@ -1824,6 +1824,12 @@ for (const { env, stubs, args } of [
   },
   // An editor whose position syntax is unknown gets the bare path.
   { env: { EDITOR: "hx" }, stubs: ["hx"], args: ["hx", "/workspace/file.ts"] },
+  // A quoted executable path stays one word.
+  {
+    env: { EDITOR: '"BIN_DIR/my editor" --flag' },
+    stubs: ["my editor"],
+    args: ["BIN_DIR/my editor", "--flag", "/workspace/file.ts"],
+  },
 ] as const) {
   it.effect.skipIf(windowsHost)(`runs the terminal editor from ${JSON.stringify(env)}`, () =>
     Effect.gen(function* () {
@@ -1833,6 +1839,7 @@ for (const { env, stubs, args } of [
       const binDir = path.join(home, "bin");
       yield* fileSystem.makeDirectory(binDir, { recursive: true });
       yield* writeExecutableStubs(fileSystem, path, binDir, [...stubs, "xdg-terminal-exec"]);
+      const withBinDir = (value: string) => value.replaceAll("BIN_DIR", binDir);
 
       let spawned: ChildProcess.StandardCommand | undefined;
       yield* Effect.gen(function* () {
@@ -1843,7 +1850,14 @@ for (const { env, stubs, args } of [
         Effect.provide(
           layerTest({
             platform: "linux",
-            env: { HOME: home, PATH: binDir, WAYLAND_DISPLAY: "wayland-test", ...env },
+            env: {
+              HOME: home,
+              PATH: binDir,
+              WAYLAND_DISPLAY: "wayland-test",
+              ...Object.fromEntries(
+                Object.entries(env).map(([key, value]) => [key, withBinDir(value)]),
+              ),
+            },
             onSpawn: (spawn) => {
               spawned = spawn;
             },
@@ -1853,7 +1867,7 @@ for (const { env, stubs, args } of [
 
       assert.ok(spawned);
       assert.equal(spawned.command, "xdg-terminal-exec");
-      assert.deepEqual(spawned.args, args);
+      assert.deepEqual(spawned.args, args.map(withBinDir));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 }
@@ -1881,3 +1895,38 @@ it.effect.skipIf(windowsHost)("hides the terminal editor when $EDITOR is not ins
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+for (const { cwd, args } of [
+  { cwd: "+qall!", args: ["nano", "./+qall!"] },
+  { cwd: "-S:3", args: ["nano", "+3", "./-S"] },
+] as const) {
+  it.effect.skipIf(windowsHost)(`keeps ${cwd} a path for editors without --`, () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-terminal-editor-" });
+      const binDir = path.join(home, "bin");
+      yield* fileSystem.makeDirectory(binDir, { recursive: true });
+      yield* writeExecutableStubs(fileSystem, path, binDir, ["nano", "xdg-terminal-exec"]);
+
+      let spawned: ChildProcess.StandardCommand | undefined;
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        yield* launcher.launchEditor({ editor: "terminal-editor", cwd });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "linux",
+            env: { HOME: home, PATH: binDir, WAYLAND_DISPLAY: "wayland-test", EDITOR: "nano" },
+            onSpawn: (spawn) => {
+              spawned = spawn;
+            },
+          }),
+        ),
+      );
+
+      assert.ok(spawned);
+      assert.deepEqual(spawned.args, args);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
