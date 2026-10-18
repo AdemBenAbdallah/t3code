@@ -182,14 +182,35 @@ const TerminalEditorEnvConfig = Config.all({
 const readTerminalEditorEnv = TerminalEditorEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
 
 // `$VISUAL` and `$EDITOR` may carry flags (`emacs -nw`) and quoted paths
-// (`"/opt/My Editor/ed"`). Words split like a shell would split them, but the
-// result is spawned without one, so nothing else is expanded.
+// (`"/opt/My Editor/ed"`). Quotes group and join adjacent text like a shell
+// word (`--cmd="set number"` is one argument), but the result is spawned
+// without a shell, so nothing else is expanded.
 function splitCommandWords(value: string): ReadonlyArray<string> {
   const words: string[] = [];
-  for (const match of value.matchAll(/(?:"([^"]*)"|'([^']*)'|(\S+?))(?=\s|$|["'])|\s+/g)) {
-    if (match[0].trim() === "") continue;
-    words.push(match[1] ?? match[2] ?? match[3] ?? "");
+  let word = "";
+  let quote: '"' | "'" | undefined;
+  let hasWord = false;
+  for (const character of value) {
+    if (quote !== undefined) {
+      if (character === quote) quote = undefined;
+      else word += character;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      hasWord = true;
+      continue;
+    }
+    if (/\s/.test(character)) {
+      if (hasWord) words.push(word);
+      word = "";
+      hasWord = false;
+      continue;
+    }
+    word += character;
+    hasWord = true;
   }
+  if (hasWord) words.push(word);
   return words;
 }
 

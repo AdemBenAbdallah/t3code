@@ -1830,6 +1830,12 @@ for (const { env, stubs, args } of [
     stubs: ["my editor"],
     args: ["BIN_DIR/my editor", "--flag", "/workspace/file.ts"],
   },
+  // A quoted flag value joins its flag, like one shell word.
+  {
+    env: { EDITOR: 'nvim --cmd="set number"' },
+    stubs: ["nvim"],
+    args: ["nvim", "--cmd=set number", "+call cursor(48,5)", "--", "/workspace/file.ts"],
+  },
 ] as const) {
   it.effect.skipIf(windowsHost)(`runs the terminal editor from ${JSON.stringify(env)}`, () =>
     Effect.gen(function* () {
